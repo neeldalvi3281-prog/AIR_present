@@ -1,0 +1,1421 @@
+# MODIFICATION — WIDE-OPEN PALM + 15° INCREMENTAL ROTATION NAVIGATION
+
+## IMPORTANT
+
+The current reform is already implemented and has:
+
+* 88/88 tests passing
+* whole-hand/palm mouse tracking
+* native Windows `SendInput`
+* fist → left click
+* palm orientation detection
+* low-resource deterministic geometry
+* no swipe / pinch / laser / modes / locks
+
+Do NOT redesign the entire application again.
+
+This task is a **targeted modification to the palm-rotation navigation system**.
+
+Preserve everything else that is already working.
+
+The priorities remain:
+
+```text
+1. RELIABILITY
+2. LOW RESOURCE USAGE
+3. LOW LATENCY
+```
+
+---
+
+# 1. NEW REQUIRED USER BEHAVIOR
+
+Page navigation must work ONLY while the user has a **stable, wide-open palm**.
+
+The final interaction should be:
+
+```text
+WIDE OPEN PALM
+      │
+      ├── rotate clockwise 15°
+      │        ↓
+      │     NEXT PAGE
+      │
+      ├── rotate clockwise another 15°
+      │        ↓
+      │     NEXT PAGE
+      │
+      ├── rotate clockwise another 15°
+      │        ↓
+      │     NEXT PAGE
+      │
+      └── etc.
+```
+
+And:
+
+```text
+WIDE OPEN PALM
+      │
+      ├── rotate anti-clockwise 15°
+      │        ↓
+      │   PREVIOUS PAGE
+      │
+      ├── rotate anti-clockwise another 15°
+      │        ↓
+      │   PREVIOUS PAGE
+      │
+      └── etc.
+```
+
+The chosen increment is:
+
+```text
+ROTATION_STEP_DEGREES = 15°
+```
+
+Keep it configurable.
+
+---
+
+# 2. VERY IMPORTANT: NO RETURN-TO-NEUTRAL REQUIREMENT
+
+The old implementation used:
+
+```text
+rotate
+→ action
+→ return near neutral
+→ re-arm
+```
+
+REMOVE that behavior.
+
+The user should be able to continuously rotate the open palm and navigate multiple pages.
+
+Example:
+
+```text
+0°       = starting orientation
+
++15°     = NEXT
++30°     = NEXT
++45°     = NEXT
++60°     = NEXT
+```
+
+Likewise:
+
+```text
+0°       = starting orientation
+
+-15°     = PREVIOUS
+-30°     = PREVIOUS
+-45°     = PREVIOUS
+-60°     = PREVIOUS
+```
+
+Do NOT require the palm to return to its original orientation between navigation actions.
+
+---
+
+# 3. WIDE-OPEN PALM IS REQUIRED FOR NAVIGATION
+
+Palm rotation navigation should only be active when the hand is clearly **OPEN / WIDE OPEN**.
+
+The open-palm detector should require the fingers to be extended using existing deterministic geometry.
+
+Use:
+
+* finger joint angles
+* normalized hand scale
+* relative landmark geometry
+
+Do NOT use fragile absolute pixel Y coordinates.
+
+The intention is:
+
+```text
+OPEN / WIDE PALM → rotation navigation enabled
+
+FIST → click only
+
+UNKNOWN → no navigation
+```
+
+Do not allow a partially folded hand to casually trigger page navigation.
+
+The open-palm classifier must tolerate:
+
+* left hand
+* right hand
+* moderate rotation
+* different hand sizes
+* moderate camera distance
+* normal landmark jitter
+
+---
+
+# 4. FIST BEHAVIOR REMAINS UNCHANGED
+
+Fist continues to mean:
+
+```text
+FIST
+ ↓
+LEFT CLICK
+```
+
+Keep:
+
+* stable confirmation
+* one click per fist entry
+* release required before another click
+* click cooldown
+* hand-loss reset
+
+Do NOT make fist a navigation gesture.
+
+Do NOT use fist to navigate pages.
+
+---
+
+# 5. PALM ROTATION MUST MEAN ACTUAL ORIENTATION CHANGE
+
+Do NOT detect rotation from palm translation.
+
+This is WRONG:
+
+```text
+move hand right → NEXT
+move hand left  → PREVIOUS
+```
+
+Instead use the palm orientation angle.
+
+Continue using the lightweight existing palm orientation method.
+
+Current method:
+
+```text
+Wrist
+  ↓
+Middle MCP
+```
+
+with:
+
+```text
+angle = atan2(dx, -dy)
+```
+
+where the orientation is normalized to:
+
+```text
+(-180°, +180°]
+```
+
+The current mirror compensation must remain centralized.
+
+Preserve:
+
+```text
+MIRROR_SIGN
+```
+
+and physically validate the final direction.
+
+---
+
+# 6. USE A COMMITTED ORIENTATION, NOT A NEUTRAL RE-ARM
+
+This is the most important architectural change.
+
+Maintain:
+
+```text
+committed_angle
+```
+
+This represents the orientation corresponding to the most recently consumed 15° step.
+
+When the user begins an open-palm session:
+
+```text
+current palm angle
+       ↓
+committed_angle = current angle
+```
+
+Then calculate:
+
+```text
+delta = wrapped_angle_difference(current_angle, committed_angle)
+```
+
+---
+
+# 7. EVERY 15° = ONE PAGE
+
+Use:
+
+```text
+rotation_step_degrees = 15
+```
+
+If:
+
+```text
+delta >= +15°
+```
+
+then:
+
+```text
+NEXT_PAGE
+```
+
+and advance:
+
+```text
+committed_angle += 15°
+```
+
+If:
+
+```text
+delta <= -15°
+```
+
+then:
+
+```text
+PREVIOUS_PAGE
+```
+
+and advance:
+
+```text
+committed_angle -= 15°
+```
+
+This means every consumed 15° of physical rotation produces exactly one navigation step.
+
+---
+
+# 8. CONTINUOUS ROTATION EXAMPLE
+
+Starting:
+
+```text
+committed_angle = 0°
+```
+
+User rotates clockwise:
+
+```text
++5°   → nothing
++10°  → nothing
++14°  → nothing
++15°  → NEXT
+```
+
+Then:
+
+```text
+committed_angle = +15°
+```
+
+Continue clockwise:
+
+```text
++20°  → nothing
++25°  → nothing
++29°  → nothing
++30°  → NEXT
+```
+
+Then:
+
+```text
+committed_angle = +30°
+```
+
+Continue:
+
+```text
++45° → NEXT
++60° → NEXT
++75° → NEXT
+```
+
+This is the desired behavior.
+
+---
+
+# 9. ANTI-CLOCKWISE EXAMPLE
+
+Starting:
+
+```text
+committed_angle = 0°
+```
+
+Rotate anti-clockwise:
+
+```text
+-5°   → nothing
+-10°  → nothing
+-14°  → nothing
+-15°  → PREVIOUS
+```
+
+Then:
+
+```text
+committed_angle = -15°
+```
+
+Continue:
+
+```text
+-30° → PREVIOUS
+-45° → PREVIOUS
+-60° → PREVIOUS
+```
+
+---
+
+# 10. DIRECTION REVERSAL MUST WORK NATURALLY
+
+The user should be able to change direction.
+
+Example:
+
+```text
+0°
+ ↓
++15° → NEXT
+
++30° → NEXT
+
+then rotate backwards
+
++15° → PREVIOUS
+
+0° → PREVIOUS
+
+-15° → PREVIOUS
+```
+
+This is correct because each movement of another 15° in the opposite direction is another navigation event.
+
+Do NOT require returning to some global neutral state.
+
+The `committed_angle` is what determines whether another 15° has been consumed.
+
+---
+
+# 11. PREVENT JITTER FROM FIRING ACTIONS
+
+15° is intentionally smaller than the previous 28° threshold, so reliability becomes especially important.
+
+Do NOT trigger from one noisy frame.
+
+Require:
+
+```text
+rotation_confirm_frames = 4
+```
+
+or the existing equivalent temporal confirmation mechanism.
+
+The threshold crossing must be stable for the required number of frames.
+
+Example:
+
+```text
+13°
+14°
+15°
+14°
+15°
+```
+
+should NOT immediately fire.
+
+Instead require the orientation to remain on the new side of the threshold consistently.
+
+---
+
+# 12. USE HYSTERESIS AROUND EACH 15° BOUNDARY
+
+Use a small configurable hysteresis margin.
+
+Recommended starting value:
+
+```text
+rotation_hysteresis_degrees = 2–3°
+```
+
+Conceptually:
+
+```text
+committed = 0°
+
+trigger threshold:
++15° + confirmation
+
+once NEXT fires:
+committed becomes +15°
+
+another NEXT should require:
++30° + confirmation
+```
+
+Do not repeatedly fire from noise around:
+
+```text
++15°
+```
+
+after the first event.
+
+The committed reference must move to the newly consumed 15° position.
+
+---
+
+# 13. NO REPEATED EVENT WHILE HOLDING
+
+Suppose:
+
+```text
+committed_angle = 15°
+current_angle = 16°
+```
+
+The user is holding the position.
+
+Expected:
+
+```text
+NO ACTION
+```
+
+Even if the hand remains visible for:
+
+```text
+1 second
+5 seconds
+30 seconds
+```
+
+there must be no additional navigation.
+
+Another NEXT requires another approximately 15° of clockwise rotation.
+
+---
+
+# 14. MULTIPLE 15° STEPS IN FAST ROTATION
+
+If a very fast hand rotation causes the measured angle to jump across multiple 15° thresholds in one or a few frames, do NOT lose the accumulated rotation.
+
+Example:
+
+```text
+0°
+→ +34°
+```
+
+This represents:
+
+```text
++15° → NEXT
++30° → NEXT
+```
+
+The system should recognize that two steps were crossed.
+
+However, do NOT fire a large burst of keyboard events in one frame.
+
+Prefer:
+
+```text
+1 navigation event
++
+preserve remaining accumulated rotation
++
+process additional crossed steps safely
+```
+
+Use a small navigation event spacing/cooldown.
+
+Recommended:
+
+```text
+step_action_spacing_ms = 100–150
+```
+
+This is intentionally much smaller than the old 700 ms cooldown because navigation is now incremental.
+
+The goal is to prevent missed pages without producing an uncontrolled key burst.
+
+---
+
+# 15. NO OLD 700 MS COOLDOWN FOR EACH COMPLETE GESTURE
+
+The previous:
+
+```text
+navigation_cooldown_ms = 700
+```
+
+was designed for one gesture = one page.
+
+That model is no longer correct.
+
+Replace it with:
+
+```text
+step_action_spacing_ms = 120
+```
+
+or another small configurable value after testing.
+
+The page rate is now controlled primarily by physical rotation:
+
+```text
+15° rotation
+→ one page
+```
+
+not by waiting for the hand to return to neutral.
+
+---
+
+# 16. HAND DISAPPEARANCE
+
+If the hand disappears:
+
+```text
+NO MOUSE MOVEMENT
+NO CLICK
+NO PAGE NAVIGATION
+```
+
+Reset rotation session state.
+
+When the hand returns:
+
+```text
+if stable WIDE OPEN PALM:
+    establish a NEW committed_angle
+```
+
+Do NOT compare the newly appearing hand to the old orientation.
+
+This prevents:
+
+```text
+hand disappears at +45°
+hand reappears at 0°
+→ accidental PREVIOUS actions
+```
+
+That must never happen.
+
+---
+
+# 17. CHANGING FROM OPEN TO FIST
+
+When the user changes:
+
+```text
+OPEN → FIST
+```
+
+then:
+
+```text
+FIST
+→ CLICK
+```
+
+and rotation navigation must stop while the fist is active.
+
+Reset the relevant rotation candidate state.
+
+When the user returns:
+
+```text
+FIST → OPEN
+```
+
+start a fresh open-palm rotation session.
+
+Do NOT compare the new open-palm orientation against the old fist orientation.
+
+---
+
+# 18. POSE PRIORITY
+
+Recommended per-frame priority:
+
+```text
+HAND PRESENT?
+    ↓
+CLASSIFY POSE
+    ↓
+FIST?
+ ┌──┴──┐
+YES    NO
+ ↓      ↓
+CLICK   OPEN?
+         ↓
+       ROTATION
+```
+
+So:
+
+```text
+FIST → click
+OPEN → rotation navigation
+UNKNOWN → no navigation
+```
+
+This prevents simultaneous fist-click + page-navigation behavior.
+
+---
+
+# 19. MOUSE MOVEMENT REMAINS INDEPENDENT
+
+The mouse must still follow:
+
+```text
+whole-hand/palm centroid
+```
+
+using the existing One-Euro filtered position.
+
+The user can move the hand around while keeping it open.
+
+That should:
+
+```text
+move the mouse
+```
+
+without changing slides unless the palm actually rotates.
+
+Architecture remains:
+
+```text
+21 LANDMARKS
+    │
+    ├──→ Palm centroid
+    │       ↓
+    │   One-Euro
+    │       ↓
+    │     MOUSE
+    │
+    ├──→ Palm orientation
+    │       ↓
+    │  15° rotation tracker
+    │       ↓
+    │   NEXT/PREVIOUS
+    │
+    └──→ Finger geometry
+            ↓
+           FIST
+            ↓
+          CLICK
+```
+
+---
+
+# 20. DO NOT CALCULATE ROTATION FROM MOUSE COORDINATES
+
+This requirement remains mandatory.
+
+Mouse:
+
+```text
+filtered palm centroid
+```
+
+Rotation:
+
+```text
+palm landmark orientation
+```
+
+Do not mix the two.
+
+---
+
+# 21. PERFORMANCE REQUIREMENT
+
+The new 15° logic must remain lightweight.
+
+Do NOT add:
+
+* another ML model
+* another MediaPipe task
+* neural-network classification
+* expensive optimization
+* threads
+* queues
+* cloud services
+* heavy dependencies
+
+The expected extra computation should remain negligible compared with MediaPipe inference.
+
+The existing baseline is approximately:
+
+```text
+~30 FPS
+~18–20 ms MediaPipe inference
+```
+
+Do not significantly regress this.
+
+---
+
+# 22. REUSE EXISTING CODE
+
+Modify the existing:
+
+```text
+vision/palm.py
+vision/rotation.py
+vision/poses.py
+actions/dispatcher.py
+config.py
+config.json
+app.py
+ui/developer.py
+tests/
+```
+
+only as necessary.
+
+Do NOT rewrite:
+
+```text
+actions/keyboard.py
+```
+
+unless absolutely required.
+
+The existing native SendInput x64 fix MUST remain unchanged and all existing tests around it must continue passing.
+
+---
+
+# 23. CONFIGURATION
+
+Use configuration similar to:
+
+```ini
+[rotation]
+enabled = true
+
+step_degrees = 15
+confirm_frames = 4
+
+hysteresis_degrees = 3
+
+step_action_spacing_ms = 120
+
+open_required = true
+```
+
+Names may follow the existing project's conventions.
+
+The important values are:
+
+```text
+15° per page
+4-frame confirmation
+small hysteresis
+short step spacing
+wide-open palm required
+```
+
+Do not hard-code these unnecessarily.
+
+---
+
+# 24. DEVELOPER PREVIEW
+
+Show:
+
+```text
+Pose: OPEN
+Palm Angle: +32.4°
+Committed Angle: +15.0°
+Delta: +17.4°
+
+Next threshold: +30°
+Remaining: +2.4°
+
+Rotation direction: CLOCKWISE
+Rotation stability: 4/4
+
+Last event:
+CLOCKWISE_STEP
+
+Last action:
+NEXT_SLIDE
+```
+
+For anti-clockwise:
+
+```text
+Pose: OPEN
+Palm Angle: -32.4°
+Committed Angle: -15.0°
+Delta: -17.4°
+
+Next threshold: -30°
+Remaining: -2.4°
+
+Rotation direction: ANTICLOCKWISE
+
+Last action:
+PREVIOUS_SLIDE
+```
+
+Also continue showing:
+
+```text
+FPS
+inference latency
+hand confidence
+Palm X/Y
+mouse X/Y
+```
+
+Keep per-frame logging disabled.
+
+---
+
+# 25. TESTS
+
+Add/update tests for:
+
+## 15° threshold
+
+```text
+0° → 14°
+```
+
+must produce:
+
+```text
+NO ACTION
+```
+
+```text
+0° → 15°
+```
+
+must produce:
+
+```text
+NEXT
+```
+
+---
+
+## 30° cumulative rotation
+
+```text
+0° → +15°
+```
+
+→ NEXT
+
+then:
+
+```text
++15° → +30°
+```
+
+→ NEXT again.
+
+Exactly two page events.
+
+---
+
+## 45°
+
+```text
+0° → +15° → +30° → +45°
+```
+
+must produce:
+
+```text
+NEXT
+NEXT
+NEXT
+```
+
+with no duplicate events while holding.
+
+---
+
+## Anti-clockwise
+
+```text
+0° → -15° → -30° → -45°
+```
+
+must produce:
+
+```text
+PREVIOUS
+PREVIOUS
+PREVIOUS
+```
+
+---
+
+## Hold
+
+At:
+
+```text
++15°
+```
+
+holding the hand still must produce:
+
+```text
+exactly one NEXT
+```
+
+not repeated NEXT actions.
+
+Same for:
+
+```text
+-15°
+```
+
+---
+
+## Jitter around threshold
+
+Test:
+
+```text
+13°
+14°
+15°
+14°
+15°
+14°
+```
+
+and ensure the detector does not repeatedly fire.
+
+---
+
+## Fast rotation
+
+Test:
+
+```text
+0° → +34°
+```
+
+and verify that two 15° steps are recognized without generating uncontrolled same-frame key bursts.
+
+---
+
+## Reverse direction
+
+Test:
+
+```text
+0°
+→ +15° = NEXT
+→ +30° = NEXT
+→ +15° = PREVIOUS
+→ 0°   = PREVIOUS
+→ -15° = PREVIOUS
+```
+
+---
+
+## Hand disappearance
+
+Test:
+
+```text
++45°
+→ hand disappears
+→ no action
+→ hand returns
+→ new open-palm baseline
+```
+
+No stale navigation.
+
+---
+
+## Open-palm requirement
+
+Test that:
+
+```text
+OPEN + rotation → navigation
+```
+
+but:
+
+```text
+UNKNOWN + rotation → no navigation
+FIST + rotation → click only
+```
+
+---
+
+# 26. LIVE TESTS
+
+After all automated tests pass:
+
+### Test 1
+
+Open the palm wide.
+
+Move the hand around without rotating it.
+
+Expected:
+
+```text
+mouse moves
+no page change
+```
+
+### Test 2
+
+Rotate clockwise approximately 15°.
+
+Expected:
+
+```text
+NEXT
+```
+
+### Test 3
+
+Rotate another 15° clockwise without returning to neutral.
+
+Expected:
+
+```text
+NEXT
+```
+
+again.
+
+### Test 4
+
+Continue another 15°.
+
+Expected:
+
+```text
+NEXT
+```
+
+again.
+
+### Test 5
+
+Rotate anti-clockwise 15° from the current orientation.
+
+Expected:
+
+```text
+PREVIOUS
+```
+
+### Test 6
+
+Hold the hand still at a rotated angle.
+
+Expected:
+
+```text
+no repeated navigation
+```
+
+### Test 7
+
+Make a fist.
+
+Expected:
+
+```text
+one LEFT CLICK
+```
+
+and no navigation.
+
+### Test 8
+
+Remove the hand completely.
+
+Expected:
+
+```text
+no movement
+no click
+no navigation
+```
+
+### Test 9
+
+Return with a wide-open palm.
+
+Expected:
+
+```text
+new rotation baseline
+```
+
+with no stale navigation.
+
+### Test 10
+
+Use actual PowerPoint.
+
+Verify physically:
+
+```text
+wide open palm
++
+clockwise 15°
+→ next slide
+
+another clockwise 15°
+→ next slide
+
+anti-clockwise 15°
+→ previous slide
+```
+
+---
+
+# 27. RELIABILITY RULE
+
+Because the step size is only 15°, do NOT make the detector trigger aggressively just to demonstrate responsiveness.
+
+A missed gesture is preferable to an accidental page change.
+
+The implementation should prefer:
+
+```text
+false negative
+```
+
+over:
+
+```text
+false positive
+```
+
+especially around the 15° boundary.
+
+Use:
+
+```text
+wide-open pose requirement
++
+4-frame confirmation
++
+small hysteresis
++
+committed-angle tracking
++
+hand-loss reset
++
+direction consistency
+```
+
+to achieve this.
+
+---
+
+# 28. FINAL EXPECTED BEHAVIOR
+
+The user experience should ultimately be:
+
+```text
+                 WIDE OPEN PALM
+                       │
+                 move hand around
+                       │
+                    MOUSE
+                       │
+                       │
+              rotate palm clockwise
+                       │
+                     +15°
+                       │
+                       ▼
+                   NEXT PAGE
+                       │
+                     +15°
+                       │
+                       ▼
+                   NEXT PAGE
+                       │
+                     +15°
+                       │
+                       ▼
+                   NEXT PAGE
+```
+
+And in the other direction:
+
+```text
+                 WIDE OPEN PALM
+                       │
+              rotate anti-clockwise
+                       │
+                     -15°
+                       │
+                       ▼
+                PREVIOUS PAGE
+                       │
+                     -15°
+                       │
+                       ▼
+                PREVIOUS PAGE
+                       │
+                     -15°
+                       │
+                       ▼
+                PREVIOUS PAGE
+```
+
+Fist remains:
+
+```text
+✊
+ ↓
+LEFT CLICK
+```
+
+---
+
+# 29. REQUIRED FINAL REPORT
+
+After implementation report:
+
+### Root cause / change
+
+Explain how the old one-shot rotation model was changed into incremental 15° navigation.
+
+### Exact algorithm
+
+Report:
+
+* palm landmarks
+* angle calculation
+* mirror compensation
+* committed angle
+* 15° threshold
+* hysteresis
+* confirmation frames
+* event spacing
+* direction handling
+* hand-loss reset
+
+### Tests
+
+Report:
+
+```text
+X/X tests passed
+```
+
+### Live validation
+
+Report honestly:
+
+```text
+Open palm navigation: PASS/FAIL/NOT TESTED
+15° clockwise: PASS/FAIL/NOT TESTED
+30° clockwise: PASS/FAIL/NOT TESTED
+15° anti-clockwise: PASS/FAIL/NOT TESTED
+hold protection: PASS/FAIL/NOT TESTED
+direction reversal: PASS/FAIL/NOT TESTED
+fist click: PASS/FAIL/NOT TESTED
+hand disappearance: PASS/FAIL/NOT TESTED
+PowerPoint: PASS/FAIL/NOT TESTED
+```
+
+### Performance
+
+Report:
+
+```text
+FPS
+MediaPipe inference
+E2E latency
+CPU
+RAM
+rotation-processing overhead
+```
+
+Compare against the previous baseline.
+
+Do not claim a physical test was passed unless it was actually performed.
+
+---
+
+# 30. STOP
+
+After this modification is complete:
+
+**STOP.**
+
+Do not add:
+
+* voice
+* calibration wizard
+* automatic presentation detection
+* multi-monitor support
+* additional gestures
+* AI models
+* cloud services
+* startup automation
+
+This modification is ONLY for:
+
+```text
+WIDE-OPEN PALM
++
+15° CLOCKWISE = NEXT
++
+15° ANTI-CLOCKWISE = PREVIOUS
++
+WHOLE-HAND MOUSE
++
+FIST = CLICK
+```
+
+Keep it:
+
+```text
+RELIABLE
+LIGHTWEIGHT
+LOW-LATENCY
+DETERMINISTIC
+OFFLINE
+```

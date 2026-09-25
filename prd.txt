@@ -1,0 +1,1791 @@
+# PRODUCT REQUIREMENTS DOCUMENT
+
+# PRESENTER CONTROLLER
+
+**Version:** 1.0
+**Status:** Development Specification
+**Platform:** Desktop / Laptop
+**Primary Target:** Windows
+**Architecture:** Offline-first, local computer vision
+**Primary Language:** Python
+**Primary Goal:** Reliable, low-latency, low-resource presentation control using natural hand gestures.
+
+---
+
+# 1. PRODUCT OVERVIEW
+
+Presenter Controller is a lightweight desktop application that allows a presenter to control presentations using natural hand gestures captured through a standard webcam.
+
+The system should allow the user to:
+
+* Move between presentation pages using air gestures.
+* Control a virtual laser pointer using the index finger.
+* Move a pointer/cursor using hand movement.
+* Perform click actions using pinch gestures.
+* Lock/unlock gesture control.
+* Use hand gestures without touching the keyboard or mouse.
+* Work with PowerPoint, Google Slides, browser presentations and PDF presentation viewers.
+* Operate completely offline.
+* Run without continuously displaying the camera feed.
+* Consume as few system resources as reasonably possible.
+* Automatically adapt to different computers and webcams.
+
+The product should prioritize:
+
+> **Reliability > low latency > low resource usage > feature count**
+
+---
+
+# 2. CORE PRODUCT PRINCIPLE
+
+The system must NOT treat this as a generic AI classification problem.
+
+Use:
+
+```text
+Camera
+ ↓
+Hand Landmark Detection
+ ↓
+Cheap mathematical feature extraction
+ ↓
+Temporal filtering
+ ↓
+Gesture State Machine
+ ↓
+Action Dispatcher
+```
+
+Machine learning is responsible primarily for:
+
+> "Where is the hand?"
+
+Traditional deterministic algorithms are responsible for:
+
+> "What is the user doing?"
+
+This separation is a core architectural principle.
+
+---
+
+# 3. PRODUCT GOALS
+
+## Primary goals
+
+### G1 — Reliable slide navigation
+
+The presenter should be able to change slides naturally without touching the computer.
+
+### G2 — Extremely low accidental activation
+
+Normal hand movements while speaking should almost never trigger slide changes.
+
+### G3 — Low latency
+
+A deliberate gesture should result in the corresponding action quickly enough to feel natural.
+
+### G4 — Low resource consumption
+
+The application should work comfortably on ordinary laptops without requiring a dedicated GPU.
+
+### G5 — Offline operation
+
+No camera data, gesture data or presentation content should need to leave the device.
+
+### G6 — Hardware independence
+
+The system should automatically adjust to different:
+
+* CPUs
+* webcams
+* resolutions
+* lighting conditions
+* presenter distances
+
+### G7 — Expandable architecture
+
+New gestures and presentation targets should be addable without rewriting the vision engine.
+
+---
+
+# 4. NON-GOALS
+
+The initial product will NOT attempt to provide:
+
+* Full body tracking
+* Face recognition
+* Voice recognition
+* Emotion recognition
+* Cloud-based AI
+* Presentation content analysis
+* Automatic slide generation
+* Meeting recording
+* Facial recording
+* Cloud synchronization
+* Multi-person gesture control
+* Gesture-controlled gaming
+
+---
+
+# 5. TARGET USER
+
+Primary user:
+
+A presenter who wants hands-free presentation control using a normal laptop webcam.
+
+Typical environments:
+
+* College classrooms
+* College presentations
+* Project demonstrations
+* Hackathons
+* Meetings
+* Personal practice
+* Small conference rooms
+
+The user may be standing several feet away from the laptop.
+
+---
+
+# 6. SUPPORTED HARDWARE
+
+Minimum target:
+
+```text
+CPU: modern dual/quad-core CPU
+RAM: 4 GB+
+Webcam: 720p-class or lower
+GPU: not required
+```
+
+Preferred:
+
+```text
+CPU: modern 4+ core processor
+RAM: 8 GB+
+Webcam: 720p/1080p
+GPU: optional
+```
+
+The application must NOT require:
+
+* NVIDIA GPU
+* CUDA
+* dedicated graphics
+* internet
+
+---
+
+# 7. TECHNOLOGY STACK
+
+## Core language
+
+Python 3.x
+
+## Computer vision
+
+OpenCV
+
+## Hand tracking
+
+MediaPipe Hand Landmarker
+
+## Numerical computation
+
+NumPy
+
+## System metrics
+
+psutil
+
+## Windows input
+
+Prefer native Windows input APIs through a lightweight Python-compatible interface.
+
+For production Windows builds, native `SendInput` integration may be used.
+
+## Filtering
+
+One-Euro Filter or equivalent low-latency adaptive filter.
+
+## Configuration
+
+Local JSON configuration.
+
+## Storage
+
+No database required.
+
+---
+
+# 8. HIGH-LEVEL ARCHITECTURE
+
+```text
+                    ┌──────────────────────┐
+                    │      WEBCAM         │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │   CAMERA MANAGER     │
+                    └──────────┬───────────┘
+                               │
+                         latest frame
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ ADAPTIVE VISION LOOP │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ MEDIAPIPE LANDMARKER │
+                    └──────────┬───────────┘
+                               │
+                         21 landmarks
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ FEATURE EXTRACTION   │
+                    │                      │
+                    │ palm center          │
+                    │ hand scale           │
+                    │ velocity             │
+                    │ direction            │
+                    │ finger states        │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ TEMPORAL FILTER      │
+                    │ One-Euro             │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ GESTURE STATE MACHINE│
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ ACTION DISPATCHER    │
+                    └──────────┬───────────┘
+                               │
+             ┌─────────────────┼─────────────────┐
+             ▼                 ▼                 ▼
+        Keyboard          Mouse/Input        Laser
+             │                 │                 │
+             └─────────────────┼─────────────────┘
+                               ▼
+                     PRESENTATION SOFTWARE
+```
+
+---
+
+# 9. APPLICATION MODES
+
+## 9.1 Developer Mode
+
+Developer Mode displays:
+
+* Camera feed
+* Hand landmarks
+* Hand bounding box
+* Palm center
+* Current gesture state
+* Confidence
+* FPS
+* Inference latency
+* CPU
+* RAM
+* frame drops
+
+Purpose:
+
+* debugging
+* calibration
+* performance testing
+* gesture development
+
+---
+
+# 9.2 Presentation Mode
+
+The camera preview must disappear.
+
+The application continues tracking in the background.
+
+Visible elements should be limited to:
+
+* optional laser
+* optional tiny status indicator
+
+No camera window should be visible.
+
+---
+
+# 9.3 Disabled Mode
+
+Gesture recognition is completely inactive.
+
+Camera may be released.
+
+No actions can be triggered.
+
+---
+
+# 9.4 Calibration Mode
+
+Used before the first presentation or when the user requests recalibration.
+
+Calibration should measure:
+
+* hand size
+* camera resolution
+* movement range
+* stationary hand noise
+* swipe amplitude
+* swipe velocity
+* neutral position
+
+Calibration should create a local profile.
+
+---
+
+# 10. GESTURE SYSTEM
+
+The system should recognize gestures using a **state machine**, not individual frame classification.
+
+---
+
+# 11. SLIDE NAVIGATION
+
+## Next slide
+
+Physical gesture:
+
+```text
+OPEN PALM
+
+RIGHT → LEFT
+```
+
+This follows the user's preferred page-turn behavior.
+
+## Previous slide
+
+```text
+OPEN PALM
+
+LEFT → RIGHT
+```
+
+---
+
+# 12. SWIPE VALIDATION
+
+A swipe must satisfy multiple conditions.
+
+Conceptually:
+
+```text
+Open palm
++
+Hand confidence sufficient
++
+Horizontal movement sufficient
++
+Horizontal movement dominates vertical movement
++
+Direction consistency sufficient
++
+Velocity sufficient
++
+Gesture duration valid
++
+System armed
++
+Cooldown expired
+=
+VALID SWIPE
+```
+
+Never trigger based solely on:
+
+```text
+x_position changed
+```
+
+---
+
+# 13. HAND-SCALE NORMALIZATION
+
+Gesture thresholds must not be fixed solely in pixels.
+
+Calculate:
+
+```text
+hand_scale
+```
+
+and normalize movement:
+
+```text
+normalized_movement =
+movement / hand_scale
+```
+
+This allows the system to work when the presenter is:
+
+* closer to the camera
+* farther from the camera
+* using different webcams
+
+---
+
+# 14. SWIPE STATE MACHINE
+
+Required states:
+
+```text
+IDLE
+ ↓
+HAND_DETECTED
+ ↓
+TRACKING
+ ↓
+SWIPE_CANDIDATE
+ ↓
+CONFIRMED
+ ↓
+ACTION_TRIGGERED
+ ↓
+COOLDOWN
+ ↓
+REARM
+ ↓
+IDLE
+```
+
+A single physical gesture must generate at most one slide action.
+
+---
+
+# 15. REARMING
+
+After a successful swipe:
+
+```text
+ACTION
+ ↓
+COOLDOWN
+ ↓
+WAIT FOR HAND STABILIZATION
+ ↓
+WAIT FOR NEW TRAJECTORY
+ ↓
+REARM
+```
+
+This prevents:
+
+```text
+one swipe
+ ↓
+NEXT
+NEXT
+NEXT
+```
+
+---
+
+# 16. POINTER MODE
+
+Index finger controls pointer position.
+
+The system tracks:
+
+```text
+index fingertip
+```
+
+and maps normalized camera coordinates to screen coordinates.
+
+Pointer movement must use smoothing.
+
+---
+
+# 17. LASER MODE
+
+The user can activate a virtual laser pointer.
+
+Architecture:
+
+```text
+Index fingertip
+ ↓
+One-Euro filter
+ ↓
+screen coordinates
+ ↓
+transparent overlay
+ ↓
+laser dot
+```
+
+The laser overlay must:
+
+* stay above the presentation
+* not steal keyboard focus
+* not intercept clicks
+* be lightweight
+* be disabled immediately when laser mode exits
+
+---
+
+# 18. PINCH CLICK
+
+Gesture:
+
+```text
+INDEX + THUMB
+     ↓
+PINCH
+```
+
+Action:
+
+```text
+mouse click
+```
+
+Use distance normalized by hand scale.
+
+Do NOT use a fixed pixel distance.
+
+---
+
+# 19. LOCK GESTURE
+
+Fist can be used to temporarily lock gesture control.
+
+When locked:
+
+```text
+hand tracking continues
+gesture actions disabled
+```
+
+The application must visually indicate lock status in developer mode.
+
+---
+
+# 20. RESUME / UNLOCK
+
+Thumb-up or designated unlock gesture may resume interaction.
+
+However, the unlock gesture must require:
+
+* confidence
+* minimum duration
+* stable pose
+
+to prevent accidental unlocking.
+
+---
+
+# 21. GESTURE MODES
+
+Do not recognize all gestures equally at all times.
+
+Use explicit modes.
+
+Example:
+
+```text
+PRESENTATION MODE
+│
+├── swipe
+├── lock
+└── mode switch
+
+POINTER MODE
+│
+├── finger movement
+├── pinch click
+└── exit
+
+LASER MODE
+│
+└── finger movement
+```
+
+Only the gestures relevant to the current mode should be evaluated.
+
+This reduces false positives and CPU work.
+
+---
+
+# 22. GESTURE PRIORITY
+
+If two gestures appear simultaneously:
+
+```text
+Mode-specific gesture
+>
+Emergency/lock gesture
+>
+Primary presentation gesture
+>
+Optional gesture
+```
+
+The system must never execute multiple conflicting actions from one frame sequence.
+
+---
+
+# 23. CAMERA ARCHITECTURE
+
+Use a configurable camera backend.
+
+Initial implementation:
+
+```text
+OpenCV
+```
+
+Possible future Windows optimization:
+
+```text
+Media Foundation
+```
+
+The camera manager must expose:
+
+```text
+resolution
+FPS
+frame timestamp
+frame availability
+camera status
+```
+
+---
+
+# 24. LATEST-FRAME POLICY
+
+Do not maintain an unbounded frame queue.
+
+The application should prefer:
+
+```text
+newest frame
+```
+
+over:
+
+```text
+oldest frame
+```
+
+If inference falls behind:
+
+```text
+old frames → discard
+newest frame → process
+```
+
+Goal:
+
+**minimum latency.**
+
+---
+
+# 25. ADAPTIVE PERFORMANCE ENGINE
+
+The application should eventually automatically adjust:
+
+* camera resolution
+* inference frequency
+* idle processing rate
+* active processing rate
+
+based on:
+
+```text
+CPU usage
+inference latency
+hand confidence
+hand size
+frame drop rate
+gesture activity
+```
+
+Example:
+
+```text
+IDLE
+↓
+low inference rate
+
+HAND DETECTED
+↓
+medium inference rate
+
+HAND MOVING
+↓
+high inference rate
+
+POINTER ACTIVE
+↓
+high continuous rate
+```
+
+---
+
+# 26. PERFORMANCE STATES
+
+Recommended conceptual states:
+
+```text
+SLEEP
+LOW_POWER
+TRACKING
+ACTIVE_GESTURE
+POINTER
+LASER
+```
+
+Each state may have a different processing rate.
+
+---
+
+# 27. RESOLUTION ADAPTATION
+
+The system should eventually test:
+
+```text
+320×240
+480×270
+640×360
+640×480
+```
+
+and select the lowest resolution that provides sufficient:
+
+* detection rate
+* confidence
+* gesture reliability
+
+Do not automatically assume 1080p is better.
+
+---
+
+# 28. MOTION-AWARE PROCESSING
+
+Future optimization:
+
+Use a very cheap motion signal to determine whether full hand inference needs to run at maximum frequency.
+
+Example:
+
+```text
+No motion
+ ↓
+low inference frequency
+
+Motion detected
+ ↓
+increase inference frequency
+```
+
+Motion detection must NEVER directly trigger a gesture.
+
+It only controls processing frequency.
+
+---
+
+# 29. FILTERING
+
+Use a low-latency adaptive filter such as:
+
+**One-Euro Filter**
+
+Apply filtering primarily to:
+
+* palm center
+* index fingertip
+* pointer position
+
+Do not over-smooth swipe detection because excessive smoothing creates latency.
+
+---
+
+# 30. RELIABILITY ENGINE
+
+The reliability engine must monitor:
+
+```text
+hand confidence
+trajectory consistency
+movement amplitude
+movement velocity
+hand scale
+gesture duration
+cooldown
+rearm state
+```
+
+Every gesture should have a confidence/validity decision.
+
+---
+
+# 31. FALSE-POSITIVE PREVENTION
+
+Normal speaking gestures must not change slides.
+
+Use:
+
+```text
+minimum movement
+direction consistency
+horizontal/vertical ratio
+velocity
+hand pose
+confidence
+cooldown
+rearm
+mode
+```
+
+Do not rely on a single threshold.
+
+---
+
+# 32. PRESENTATION APPLICATION SUPPORT
+
+The controller should support:
+
+### PowerPoint
+
+Use standard keyboard/input controls where possible.
+
+### Google Slides
+
+Use browser keyboard controls.
+
+### PDF viewers
+
+Use standard keyboard controls.
+
+### Browser presentations
+
+Use standard keyboard controls.
+
+The controller should prefer generic keyboard events over application-specific automation.
+
+---
+
+# 33. ACTIVE APPLICATION DETECTION
+
+The system may detect the foreground application.
+
+Example:
+
+```text
+PowerPoint
+↓
+presentation profile
+
+Chrome
+↓
+browser presentation profile
+
+PDF viewer
+↓
+PDF profile
+```
+
+However, application detection must not be required for basic next/previous functionality.
+
+Generic keyboard control should remain the fallback.
+
+---
+
+# 34. MANUAL EMERGENCY CONTROL
+
+Keyboard controls must always remain available.
+
+Recommended:
+
+```text
+Arrow Right → next
+Arrow Left  → previous
+F8           → arm/disarm
+ESC          → emergency gesture disable
+```
+
+The exact keys should be configurable.
+
+---
+
+# 35. STARTUP
+
+The application starts manually.
+
+It must NOT automatically launch with Windows unless the user explicitly enables that feature later.
+
+Startup sequence:
+
+```text
+Launch
+ ↓
+Load configuration
+ ↓
+Detect camera
+ ↓
+Load model
+ ↓
+Warm up
+ ↓
+Run calibration/profile
+ ↓
+READY
+```
+
+---
+
+# 36. NO CLOUD DEPENDENCY
+
+All core functionality must work without internet.
+
+Required:
+
+```text
+camera
+hand tracking
+gesture recognition
+slide control
+laser
+pointer
+calibration
+performance monitoring
+```
+
+must all work offline.
+
+---
+
+# 37. PRIVACY
+
+The application must never upload:
+
+* camera frames
+* screenshots
+* hand landmarks
+* presentation content
+* user activity
+
+to a server.
+
+Camera frames remain in memory.
+
+Default behavior:
+
+```text
+frame
+ ↓
+process
+ ↓
+discard
+```
+
+---
+
+# 38. CONFIGURATION
+
+Use a local configuration file.
+
+Example:
+
+```json
+{
+  "camera": {
+    "device": 0,
+    "width": 640,
+    "height": 480,
+    "target_fps": 30
+  },
+  "tracking": {
+    "max_hands": 1,
+    "min_detection_confidence": 0.6,
+    "min_tracking_confidence": 0.6
+  },
+  "gesture": {
+    "swipe_enabled": true,
+    "cooldown_ms": 800
+  },
+  "mode": "presentation"
+}
+```
+
+Do not hard-code tunable parameters throughout the application.
+
+---
+
+# 39. USER PROFILES
+
+The system should eventually support local profiles.
+
+Example:
+
+```text
+profiles/
+├── default.json
+├── laptop.json
+└── classroom.json
+```
+
+A profile can store:
+
+* camera
+* sensitivity
+* swipe thresholds
+* calibration values
+* pointer sensitivity
+
+---
+
+# 40. CALIBRATION
+
+Calibration should be quick.
+
+Target:
+
+```text
+5–15 seconds
+```
+
+The system should measure:
+
+### Static noise
+
+User holds hand still.
+
+Measure:
+
+```text
+x jitter
+y jitter
+```
+
+### Hand scale
+
+Measure:
+
+```text
+average hand size
+```
+
+### Swipe
+
+User performs:
+
+```text
+right → left
+left → right
+```
+
+Measure:
+
+```text
+distance
+speed
+duration
+trajectory
+```
+
+### Neutral position
+
+Measure normal resting hand position.
+
+---
+
+# 41. SELF-TUNING
+
+The system should derive thresholds from calibration rather than relying entirely on universal constants.
+
+Example:
+
+```text
+noise level
++
+hand scale
++
+observed swipe amplitude
++
+observed velocity
+```
+
+→ generate personalized thresholds.
+
+---
+
+# 42. PERFORMANCE MONITORING
+
+Developer mode should expose:
+
+```text
+CPU %
+RAM
+camera FPS
+inference FPS
+inference latency
+P95 latency
+frame drops
+hand detection rate
+gesture latency
+```
+
+---
+
+# 43. RELEASE PERFORMANCE TARGETS
+
+These are targets to benchmark, not assumptions.
+
+```text
+Startup:              < 2 seconds
+Gesture latency P95:  < 120 ms
+Idle CPU:             < 5%
+Active CPU:           < 15%
+RAM:                  preferably < 200 MB
+False slide triggers: extremely rare
+Offline capability:   100%
+```
+
+The application must be optimized against real measurements.
+
+---
+
+# 44. RESOURCE OPTIMIZATION RULES
+
+Do:
+
+* one hand only
+* latest-frame processing
+* adaptive FPS
+* adaptive resolution
+* CPU-first operation
+* object reuse
+* minimal allocations
+* minimal image copies
+* no unnecessary image processing
+* no unnecessary drawing in release mode
+* no unnecessary threads
+
+Do not:
+
+* run face tracking
+* run pose tracking
+* run segmentation
+* run multiple hand models
+* run an LLM
+* process 1080p by default
+* store frames
+* use unbounded queues
+* run cloud APIs
+
+---
+
+# 45. DEVELOPMENT ARCHITECTURE
+
+```text
+presenter-controller/
+│
+├── app.py
+├── config.py
+├── requirements.txt
+├── README.md
+│
+├── camera/
+│   ├── capture.py
+│   └── calibration.py
+│
+├── vision/
+│   ├── hand_tracker.py
+│   └── features.py
+│
+├── gestures/
+│   ├── state_machine.py
+│   ├── swipe.py
+│   ├── poses.py
+│   ├── pointer.py
+│   └── filters.py
+│
+├── controller/
+│   ├── actions.py
+│   ├── keyboard.py
+│   ├── mouse.py
+│   └── applications.py
+│
+├── performance/
+│   ├── profiler.py
+│   └── adaptive.py
+│
+├── ui/
+│   ├── developer.py
+│   ├── calibration.py
+│   └── laser.py
+│
+├── profiles/
+│
+├── models/
+│   └── hand_landmarker.task
+│
+└── logs/
+```
+
+---
+
+# 46. SOFTWARE DESIGN PRINCIPLES
+
+The project must follow:
+
+### Separation of concerns
+
+Vision must not directly control PowerPoint.
+
+Correct:
+
+```text
+Vision
+ ↓
+Gesture
+ ↓
+Action
+ ↓
+Controller
+```
+
+Incorrect:
+
+```text
+MediaPipe callback
+ ↓
+press right arrow
+```
+
+---
+
+### Replaceable components
+
+The system should allow:
+
+```text
+MediaPipe
+```
+
+to eventually be replaced by another hand-tracking backend without rewriting the gesture engine.
+
+---
+
+### Testability
+
+Gesture logic should be testable without a webcam.
+
+The GestureEngine should accept landmark data.
+
+Therefore:
+
+```text
+Recorded landmarks
+ ↓
+GestureEngine
+ ↓
+gesture result
+```
+
+can be tested offline.
+
+---
+
+# 47. GESTURE REPLAY SYSTEM
+
+Future developer feature:
+
+Record only landmark/feature data, not video.
+
+Example:
+
+```text
+timestamp
+palm_x
+palm_y
+hand_scale
+finger states
+confidence
+```
+
+Then replay:
+
+```text
+recorded landmarks
+ ↓
+gesture engine
+ ↓
+result
+```
+
+This allows gesture algorithm testing without using the camera.
+
+---
+
+# 48. TESTING STRATEGY
+
+Test categories:
+
+### Camera tests
+
+* camera unavailable
+* camera disconnected
+* low FPS
+* different resolutions
+
+### Tracking tests
+
+* hand visible
+* hand disappears
+* hand reappears
+* low lighting
+* presenter far away
+
+### Gesture tests
+
+* valid swipe
+* slow movement
+* fast movement
+* diagonal movement
+* random hand movement
+* repeated swipe
+* incomplete swipe
+
+### Reliability tests
+
+* talking naturally
+* moving both arms
+* adjusting clothes
+* pointing at screen
+* standing still
+
+---
+
+# 49. TWO-HAND POLICY
+
+Initial product uses:
+
+**one active hand.**
+
+The system should identify one stable hand and follow it.
+
+Two-hand support may be added later.
+
+This is deliberate because one-hand tracking provides:
+
+* lower complexity
+* lower CPU usage
+* fewer ambiguities
+* fewer false gestures
+
+---
+
+# 50. ERROR HANDLING
+
+The application must gracefully handle:
+
+```text
+camera unavailable
+camera disconnected
+model missing
+invalid configuration
+unsupported resolution
+MediaPipe failure
+permission failure
+presentation window unavailable
+```
+
+It should never crash silently.
+
+---
+
+# 51. USER FEEDBACK
+
+In developer mode:
+
+```text
+Camera ✓
+Model ✓
+Hand ✓
+Gesture Engine ✓
+Controller ✓
+```
+
+In presentation mode:
+
+Use minimal feedback.
+
+Optional:
+
+```text
+small corner indicator
+```
+
+Do not cover presentation content.
+
+---
+
+# 52. LOGGING
+
+Development:
+
+Detailed logs.
+
+Production:
+
+Minimal logs.
+
+Do not continuously write logs to disk during every frame.
+
+Never log camera images.
+
+---
+
+# 53. SECURITY / PRIVACY
+
+No network calls are required.
+
+The application should not require administrator privileges unless a specific Windows integration later proves necessary.
+
+Do not collect user data.
+
+---
+
+# 54. DEVELOPMENT PHASES
+
+## PHASE 1
+
+### Camera + Hand Tracking Benchmark
+
+```text
+Camera
+ ↓
+MediaPipe
+ ↓
+21 landmarks
+ ↓
+performance measurement
+```
+
+No gestures.
+
+---
+
+## PHASE 2
+
+### Gesture Mathematics
+
+Implement:
+
+* palm center
+* hand scale
+* velocity
+* direction
+* One-Euro filtering
+* normalized movement
+
+No presentation control yet.
+
+---
+
+## PHASE 3
+
+### Swipe State Machine
+
+Implement:
+
+```text
+right → left
+left → right
+```
+
+with:
+
+* thresholds
+* confidence
+* direction consistency
+* cooldown
+* rearm
+* calibration
+
+---
+
+## PHASE 4
+
+### Presentation Controller
+
+Implement:
+
+* next
+* previous
+* arm/disarm
+* emergency disable
+
+Test with:
+
+* PowerPoint
+* browser
+* PDF
+
+---
+
+## PHASE 5
+
+### Pointer
+
+Implement:
+
+```text
+index finger
+ ↓
+screen mapping
+ ↓
+mouse/pointer
+```
+
+---
+
+## PHASE 6
+
+### Laser
+
+Implement:
+
+```text
+index finger
+ ↓
+filtered position
+ ↓
+transparent overlay
+ ↓
+laser
+```
+
+---
+
+## PHASE 7
+
+### Pinch / Click
+
+Implement:
+
+```text
+thumb + index
+ ↓
+normalized distance
+ ↓
+click
+```
+
+---
+
+## PHASE 8
+
+### Adaptive Performance
+
+Implement:
+
+* adaptive FPS
+* adaptive resolution
+* idle mode
+* motion-aware processing
+* CPU-aware adjustment
+
+---
+
+## PHASE 9
+
+### Calibration Profiles
+
+Implement:
+
+* automatic calibration
+* profile storage
+* profile loading
+* recalibration
+
+---
+
+## PHASE 10
+
+### Production Mode
+
+Remove/hide:
+
+* camera preview
+* debug graphics
+* verbose logging
+* unnecessary diagnostics
+
+Keep:
+
+* gesture engine
+* controller
+* laser
+* safety controls
+
+---
+
+# 55. VERSION ROADMAP
+
+## v0.1
+
+Camera + hand tracking.
+
+## v0.2
+
+Swipe recognition.
+
+## v0.3
+
+Reliable presentation control.
+
+## v0.4
+
+Pointer + pinch.
+
+## v0.5
+
+Laser.
+
+## v0.6
+
+Adaptive performance.
+
+## v0.7
+
+Calibration profiles.
+
+## v1.0
+
+Stable personal presentation controller.
+
+---
+
+# 56. DEFINITION OF DONE — V1
+
+The product is considered complete when the user can:
+
+1. Launch the application manually.
+2. Allow it to detect the webcam.
+3. Complete calibration.
+4. Open PowerPoint.
+5. Start a presentation.
+6. Put the laptop at a normal presentation distance.
+7. Swipe right → left.
+8. Move to the next slide.
+9. Swipe left → right.
+10. Move to the previous slide.
+11. Speak naturally and move their hands without accidental slide changes.
+12. Activate pointer mode.
+13. Move the pointer using their index finger.
+14. Use pinch to click.
+15. Activate a laser pointer.
+16. Present without seeing the camera preview.
+17. Use the system without internet.
+18. Disable gesture control instantly with the emergency key.
+19. Exit without crashes.
+
+---
+
+# 57. SUCCESS METRICS
+
+The most important metrics are:
+
+### Reliability
+
+How often does an intentional gesture produce the correct action?
+
+### False activation rate
+
+How often does normal movement trigger an action?
+
+### Latency
+
+Time between physical gesture completion and action.
+
+### CPU
+
+Average CPU consumption.
+
+### Memory
+
+RAM consumption.
+
+### Portability
+
+How well does it operate across different machines and webcams?
+
+---
+
+# 58. PRODUCT PRIORITY
+
+When two requirements conflict:
+
+```text
+1. Reliability
+2. Safety / accidental activation prevention
+3. Latency
+4. Low CPU usage
+5. Portability
+6. Feature richness
+7. Visual polish
+```
+
+Never sacrifice reliability merely to add another gesture.
+
+---
+
+# 59. FINAL PRODUCT PHILOSOPHY
+
+Presenter Controller should feel like:
+
+> **A invisible computer peripheral controlled by your hand.**
+
+It should NOT feel like:
+
+> "A computer-vision demo running a webcam."
+
+The user should launch it, calibrate once, start presenting, and forget that the software exists.
+
+The ideal experience is:
+
+```text
+Launch
+  ↓
+READY
+  ↓
+Present
+  ↓
+🖐️ ← → 🖐️
+  ↓
+Slides change naturally
+  ↓
+No visible camera
+  ↓
+No internet
+  ↓
+No noticeable lag
+  ↓
+No accidental actions
+```
+
+The technology should disappear behind the experience.

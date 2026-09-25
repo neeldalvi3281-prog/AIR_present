@@ -1,0 +1,2037 @@
+# TOTAL REFORM — Reliable, Low-Resource Whole-Hand Mouse + Palm Rotation Presentation Controller
+
+## IMPORTANT — READ BEFORE EDITING
+
+This is a **major interaction redesign** of the existing project.
+
+Do NOT blindly rewrite the project.
+
+First inspect the existing implementation and understand what is already working, especially the recent **Windows native `SendInput` fix**.
+
+The final system must prioritize these three things, in this exact order:
+
+```text
+1. RELIABILITY
+2. LOW RESOURCE USAGE
+3. LOW LATENCY / RESPONSIVENESS
+```
+
+A feature that is theoretically clever but unreliable or computationally expensive is NOT acceptable.
+
+The project is a local/offline Windows presentation controller using:
+
+* Python
+* OpenCV
+* MediaPipe Hand Landmarker
+* deterministic hand geometry
+* native Windows `SendInput`
+* no cloud AI
+* no additional ML model
+
+The current project already has working hand tracking, gesture infrastructure, native keyboard input, and native mouse input.
+
+Your job is to **reform the interaction model**, not rebuild the entire project from scratch.
+
+---
+
+# 1. CORE DESIGN PRINCIPLES
+
+The new implementation MUST follow these principles:
+
+### Reliability first
+
+Prefer:
+
+```text
+simple geometry
++
+temporal filtering
++
+state machines
++
+hysteresis
++
+dead zones
++
+confirmation frames
++
+cooldowns
+```
+
+over complicated classifiers.
+
+Do NOT use a complicated algorithm merely because it appears more sophisticated.
+
+The system should favor **not triggering an action** over accidentally triggering the wrong action.
+
+A false page change or accidental click is worse than occasionally requiring the user to repeat a gesture.
+
+---
+
+### Low resource usage
+
+The controller is intended to run on an ordinary laptop.
+
+Do NOT add:
+
+* another neural network
+* PyTorch
+* TensorFlow
+* YOLO
+* OpenPose
+* MediaPipe Holistic
+* cloud APIs
+* GPU-only processing
+* continuous recording
+* unnecessary background workers
+* large automation frameworks
+
+Reuse the existing MediaPipe Hand Landmarker.
+
+All additional geometry and state calculations should be extremely lightweight.
+
+Target additional processing:
+
+```text
+palm geometry        < 0.2 ms/frame
+rotation calculation < 0.2 ms/frame
+fist classification  < 0.2 ms/frame
+mouse mapping        < 0.1 ms/frame
+```
+
+The exact numbers are targets, not excuses to sacrifice reliability.
+
+---
+
+# 2. EXISTING PERFORMANCE BASELINE
+
+The existing system is approximately:
+
+```text
+~30 FPS
+~18–20 ms MediaPipe inference
+```
+
+The reform MUST NOT cause a meaningful performance regression.
+
+Do not optimize blindly.
+
+First measure the existing baseline, then measure the new implementation.
+
+Report:
+
+```text
+FPS
+MediaPipe inference latency
+E2E latency
+CPU usage
+RAM usage
+gesture-processing overhead
+```
+
+If performance decreases substantially, investigate the cause before declaring the reform complete.
+
+---
+
+# 3. FIRST: INSPECT THE EXISTING PROJECT
+
+Before modifying anything, inspect:
+
+```text
+app.py
+config.py
+config.json
+
+vision/features.py
+vision/gesture_features.py
+vision/gesture_state.py
+vision/poses.py
+vision/filters.py
+vision/hand_tracker.py
+
+actions/dispatcher.py
+actions/keyboard.py
+actions/mouse.py
+actions/modes.py
+actions/events.py
+
+ui/developer.py
+ui/laser.py
+
+tests/
+```
+
+Also inspect the current test suite.
+
+Pay particular attention to:
+
+### `actions/keyboard.py`
+
+The recent `SendInput` fix MUST NOT be broken.
+
+The correct x64 Win32 `INPUT` structure is already fixed and validated.
+
+Do NOT replace it with:
+
+* `pyautogui`
+* `pynput`
+* Selenium
+* AutoHotkey
+* another automation library
+* a simplified ctypes structure
+
+Continue using the corrected native Windows `SendInput` implementation.
+
+---
+
+# 4. NEW FINAL INTERACTION MODEL
+
+The project should now behave like this:
+
+```text
+                    HAND DETECTED
+                         │
+                         ▼
+              WHOLE-HAND TRACKING
+                         │
+            ┌────────────┴────────────┐
+            │                         │
+            ▼                         ▼
+       PALM ROTATION               HAND POSE
+            │                         │
+      ┌─────┴─────┐                   │
+      │           │                   │
+      ▼           ▼                   ▼
+ CLOCKWISE   ANTI-CLOCKWISE         FIST
+      │           │                   │
+      ▼           ▼                   ▼
+ NEXT PAGE   PREVIOUS PAGE          CLICK
+```
+
+There are NO separate mouse/laser modes.
+
+There is NO swipe navigation.
+
+There is NO pinch click.
+
+There is NO fist lock.
+
+There is NO thumbs-up unlock.
+
+There are NO F8/F9 mode-switching keys.
+
+The application is ALWAYS operating in its normal mouse-control interaction model.
+
+---
+
+# 5. FINAL USER CONTROLS
+
+## A. Whole-hand mouse movement
+
+The mouse pointer follows the **whole hand/palm**, NOT the index fingertip.
+
+Use a palm/hand anchor calculated from multiple landmarks.
+
+Recommended anchor:
+
+```text
+Wrist
+Index MCP
+Middle MCP
+Ring MCP
+Pinky MCP
+```
+
+Calculate:
+
+```text
+palm_center =
+(
+    wrist +
+    index_mcp +
+    middle_mcp +
+    ring_mcp +
+    pinky_mcp
+) / 5
+```
+
+Do NOT use only:
+
+```text
+index fingertip
+```
+
+for mouse tracking.
+
+The cursor should feel like the user's whole hand is moving the pointer.
+
+---
+
+# 6. PALM MOUSE TRACKING PIPELINE
+
+Use:
+
+```text
+Camera
+  ↓
+MediaPipe Hand Landmarker
+  ↓
+21 landmarks
+  ↓
+Palm centroid
+  ↓
+Normalized camera coordinates
+  ↓
+One-Euro filtering
+  ↓
+Screen coordinate mapping
+  ↓
+Native SendInput absolute mouse movement
+```
+
+Reuse the existing One-Euro filter infrastructure.
+
+Do NOT introduce another smoothing system unless testing proves the existing filter is insufficient.
+
+Do NOT over-smooth the pointer.
+
+The cursor must remain responsive.
+
+---
+
+# 7. HAND DISAPPEARANCE
+
+If no hand is detected:
+
+```text
+NO MOUSE MOVEMENT
+NO CLICK
+NO PAGE NAVIGATION
+NO ACTION
+```
+
+The application simply waits.
+
+When the hand reappears:
+
+```text
+resume tracking
+```
+
+Do not generate:
+
+* an artificial mouse jump
+* an artificial click
+* a page navigation event
+* a stale rotation event
+
+when the hand re-enters the camera.
+
+Reset or appropriately invalidate temporal state when the hand is absent long enough to prevent stale gestures.
+
+---
+
+# 8. PALM ROTATION = PAGE NAVIGATION
+
+This is now the **only page-navigation gesture**.
+
+### Clockwise palm rotation
+
+```text
+CLOCKWISE ROTATION
+        ↓
+NEXT_SLIDE
+        ↓
+Right Arrow
+```
+
+### Anti-clockwise palm rotation
+
+```text
+ANTI-CLOCKWISE ROTATION
+        ↓
+PREVIOUS_SLIDE
+        ↓
+Left Arrow
+```
+
+Use the existing native keyboard adapter.
+
+Do NOT use:
+
+* swipe gestures
+* mouse clicks
+* pinch
+* finger poses
+
+for page navigation.
+
+---
+
+# 9. ACTUAL PALM ORIENTATION MUST BE TRACKED
+
+Do NOT interpret palm rotation using palm movement on the screen.
+
+This is WRONG:
+
+```text
+hand moves right → clockwise
+hand moves left → anti-clockwise
+```
+
+The hand can translate anywhere without rotating.
+
+Instead calculate the **orientation of the palm itself** from the landmarks.
+
+The system must distinguish:
+
+```text
+TRANSLATION
+```
+
+from:
+
+```text
+ROTATION
+```
+
+Example:
+
+```text
+Move hand right
+    ↓
+NO page navigation
+
+Rotate palm clockwise
+    ↓
+NEXT PAGE
+```
+
+This distinction is a core reliability requirement.
+
+---
+
+# 10. PALM ORIENTATION CALCULATION
+
+Construct a local palm coordinate system using multiple landmarks.
+
+At minimum use:
+
+```text
+Wrist
+Index MCP
+Middle MCP
+Ring MCP
+Pinky MCP
+```
+
+Do NOT use fragile rules such as:
+
+```text
+if landmark_y > fixed_value
+```
+
+or any similar fixed image-coordinate shortcut for orientation.
+
+Use normalized geometric relationships.
+
+The orientation calculation must be tolerant of:
+
+* left hand
+* right hand
+* moderate hand rotation
+* moderate translation
+* moderate camera perspective
+* different hand sizes
+* normal landmark jitter
+
+Do NOT add another ML model.
+
+---
+
+# 11. ROTATION ESTIMATION MUST BE STABLE
+
+Use a stable palm reference vector/basis derived from multiple palm landmarks.
+
+Prefer an orientation estimate that is resistant to noise from any one landmark.
+
+For example, construct a palm-direction vector or local palm basis using combinations of:
+
+```text
+wrist
+middle MCP
+index MCP
+pinky MCP
+```
+
+Use the resulting orientation rather than trusting one finger.
+
+If appropriate, use a robust average/centroid of palm landmarks before determining orientation.
+
+Avoid unnecessary matrix-heavy or computationally expensive operations every frame.
+
+Simple vector math is preferred.
+
+---
+
+# 12. ROTATION ANGLE
+
+Track a continuous palm orientation value.
+
+Conceptually:
+
+```text
+previous_angle
+       ↓
+current_angle
+       ↓
+signed_angle_delta
+```
+
+Handle angle wrapping correctly.
+
+For example:
+
+```text
+179° → -179°
+```
+
+must be interpreted as approximately:
+
+```text
++2°
+```
+
+not:
+
+```text
+-358°
+```
+
+Use a proper wrapped angular difference calculation.
+
+---
+
+# 13. CLOCKWISE / ANTI-CLOCKWISE MAPPING
+
+Determine the direction from the palm orientation change.
+
+However, **do not blindly assume the mathematical sign convention**.
+
+The camera may be mirrored.
+
+The implementation must explicitly validate:
+
+```text
+physical clockwise → NEXT
+physical anti-clockwise → PREVIOUS
+```
+
+for the actual camera pipeline.
+
+If the camera mirror transforms the sign, compensate in one clearly documented place.
+
+Do NOT scatter sign inversions throughout the code.
+
+---
+
+# 14. ROTATION MUST BE RELATIVE TO A NEUTRAL STARTING ORIENTATION
+
+For reliability, do not require a globally fixed palm angle.
+
+Instead:
+
+```text
+stable neutral orientation
+        ↓
+record baseline
+        ↓
+measure relative rotation
+```
+
+Example:
+
+```text
+neutral = +12°
+current = +41°
+
+relative rotation = +29°
+```
+
+This is a meaningful clockwise rotation.
+
+The neutral orientation may vary naturally between users and camera placement.
+
+This is much more robust than:
+
+```text
+if angle > 30° → next
+```
+
+---
+
+# 15. ROTATION THRESHOLD
+
+Minor orientation changes must not navigate slides.
+
+Recommended starting point:
+
+```text
+min_rotation_degrees = 28°
+```
+
+The exact threshold must remain configurable.
+
+The implementation should use hysteresis between activation and release thresholds.
+
+For example:
+
+```text
+activation threshold = ~28°
+release threshold    = ~10–15°
+```
+
+This prevents the state from rapidly bouncing between active and released near the threshold.
+
+Do NOT trigger on tiny angle changes.
+
+---
+
+# 16. ROTATION STATE MACHINE
+
+Use an edge-triggered state machine.
+
+Recommended:
+
+```text
+IDLE
+  ↓
+ROTATION_TRACKING
+  ↓
+ROTATION_CANDIDATE
+  ↓
+ROTATION_CONFIRMED
+  ↓
+TRIGGER
+  ↓
+COOLDOWN
+  ↓
+WAIT_FOR_REARM
+  ↓
+IDLE
+```
+
+The exact internal names may differ, but the behavior must remain equivalent.
+
+The purpose is to prevent repeated navigation and false positives.
+
+---
+
+# 17. ROTATION CONFIRMATION
+
+Require multiple consecutive frames before triggering.
+
+Recommended:
+
+```text
+rotation_confirm_frames = 4
+```
+
+Example:
+
+```text
+Frame 1 → clockwise candidate
+Frame 2 → clockwise candidate
+Frame 3 → clockwise candidate
+Frame 4 → confirmed
+             ↓
+          NEXT PAGE
+```
+
+If the direction changes before confirmation:
+
+```text
+cancel candidate
+```
+
+Do not trigger.
+
+This makes the detector tolerant of noisy landmark estimates.
+
+---
+
+# 18. ROTATION COOLDOWN
+
+After navigation:
+
+```text
+NEXT/PREVIOUS
+      ↓
+COOLDOWN
+```
+
+Recommended starting value:
+
+```text
+navigation_cooldown_ms = 700
+```
+
+During cooldown:
+
+```text
+NO SECOND PAGE ACTION
+```
+
+unless an entirely separate, valid, re-armed gesture has been established.
+
+---
+
+# 19. ROTATION RE-ARM
+
+Holding a rotated palm must NEVER repeatedly change pages.
+
+Example:
+
+```text
+Neutral
+   ↓
+Clockwise 30°
+   ↓
+NEXT PAGE
+   ↓
+hold clockwise
+   ↓
+NO ACTION
+   ↓
+return near neutral
+   ↓
+RE-ARM
+   ↓
+clockwise again
+   ↓
+NEXT PAGE
+```
+
+This is mandatory.
+
+The implementation must be edge-triggered rather than level-triggered.
+
+---
+
+# 20. ROTATION DIRECTION REVERSAL
+
+Handle direction changes cleanly.
+
+Example:
+
+```text
+clockwise candidate
+      ↓
+changes direction
+      ↓
+cancel candidate
+```
+
+Do not accidentally trigger:
+
+```text
+NEXT
+PREVIOUS
+```
+
+from noisy back-and-forth orientation changes.
+
+Require a fresh stable gesture after re-arm.
+
+---
+
+# 21. NO FALSE ROTATION FROM HAND TRANSLATION
+
+Moving the hand around the camera must not cause page navigation.
+
+Test:
+
+```text
+left
+right
+up
+down
+diagonal
+fast movement
+slow movement
+```
+
+without intentionally rotating the palm.
+
+Expected:
+
+```text
+NO NEXT
+NO PREVIOUS
+```
+
+This test is a major acceptance criterion.
+
+---
+
+# 22. FIST = LEFT CLICK
+
+The fist remains the click gesture.
+
+When a stable fist is detected:
+
+```text
+FIST_STARTED
+      ↓
+LEFT_CLICK
+      ↓
+native SendInput
+```
+
+Only one click per fist entry.
+
+Holding the fist must NOT generate repeated clicks.
+
+Example:
+
+```text
+OPEN
+ ↓
+FIST
+ ↓
+CLICK
+ ↓
+FIST HELD
+ ↓
+NO MORE CLICKS
+ ↓
+OPEN
+ ↓
+FIST
+ ↓
+CLICK
+```
+
+Recommended:
+
+```text
+confirm_frames = 4
+release_frames = 3
+click_cooldown_ms = 600
+```
+
+Tune only through measured testing.
+
+---
+
+# 23. REMOVE OLD GESTURES
+
+Remove active behavior for:
+
+```text
+SWIPE_LEFT_CONFIRMED
+SWIPE_RIGHT_CONFIRMED
+PINCH_STARTED
+LOCK_CONTROL
+UNLOCK_CONTROL
+THUMBS_UP_UNLOCK
+LASER MODE
+F8/F9 switching
+```
+
+Do not retain unnecessary gesture calculations "just in case."
+
+Unused gesture processing consumes CPU and increases complexity.
+
+If old modules are no longer referenced anywhere, remove them cleanly.
+
+---
+
+# 24. NO INTERACTION MODES
+
+The final interaction system should NOT have:
+
+```text
+LASER
+MOUSE
+LOCKED
+UNLOCKED
+```
+
+modes.
+
+The controller is always active as:
+
+```text
+WHOLE-HAND MOUSE
++
+PALM ROTATION NAVIGATION
++
+FIST CLICK
+```
+
+---
+
+# 25. POSE CLASSIFICATION
+
+Only classify gestures that are actually required.
+
+Recommended active classes:
+
+```text
+OPEN
+FIST
+UNKNOWN
+```
+
+Do NOT retain Peace and OK classifiers simply because they existed previously.
+
+Removing unnecessary classifiers reduces computation and simplifies failure modes.
+
+---
+
+# 26. FIST CLASSIFICATION
+
+Use deterministic geometry based on:
+
+* joint angles
+* finger extension/folding
+* normalized distances
+* palm scale
+
+Avoid fixed pixel thresholds.
+
+The classifier should tolerate:
+
+* left/right hand
+* moderate rotation
+* different hand sizes
+* moderate camera distance
+* normal landmark noise
+
+No additional ML model.
+
+---
+
+# 27. SEPARATE MOUSE AND ROTATION GEOMETRY
+
+This is extremely important.
+
+### Mouse
+
+Use:
+
+```text
+filtered palm centroid
+```
+
+because mouse movement benefits from smoothing.
+
+### Rotation
+
+Use:
+
+```text
+raw/current landmark geometry
+```
+
+or only lightly filtered orientation.
+
+Do NOT calculate rotation from:
+
+```text
+filtered mouse X/Y
+```
+
+The systems must remain independent:
+
+```text
+LANDMARKS
+   │
+   ├──→ Palm centroid
+   │       ↓
+   │   One-Euro filter
+   │       ↓
+   │      Mouse
+   │
+   └──→ Palm orientation
+           ↓
+      Rotation detector
+           ↓
+       Navigation
+```
+
+---
+
+# 28. AVOID OVER-FILTERING
+
+Filtering improves stability, but excessive filtering increases latency.
+
+Do NOT:
+
+* stack several moving averages
+* use a huge history window
+* smooth orientation heavily
+* delay every event unnecessarily
+
+Prefer:
+
+```text
+minimal smoothing
++
+confirmation frames
++
+hysteresis
++
+state machine
+```
+
+This gives reliability without excessive latency.
+
+---
+
+# 29. LEFT/RIGHT HAND SUPPORT
+
+Support both:
+
+```text
+left hand
+right hand
+```
+
+Do not hard-code one hand unless absolutely necessary.
+
+Palm orientation should be derived from a coordinate system that works for both hands.
+
+The final physical direction must remain:
+
+```text
+physical clockwise → NEXT
+physical anti-clockwise → PREVIOUS
+```
+
+for both supported hands.
+
+---
+
+# 30. CAMERA MIRRORING
+
+The development preview can remain mirrored for natural interaction.
+
+However:
+
+**mirroring must NOT silently reverse page navigation semantics.**
+
+Explicitly test:
+
+```text
+physical clockwise
+→ calculated clockwise
+→ NEXT
+```
+
+and:
+
+```text
+physical anti-clockwise
+→ calculated anti-clockwise
+→ PREVIOUS
+```
+
+Document any coordinate transformation in one place.
+
+---
+
+# 31. MOUSE SCREEN MAPPING
+
+Map palm coordinates from normalized camera space to screen coordinates.
+
+Use the existing native absolute `SendInput` mapping:
+
+```text
+0–65535
+```
+
+Do not introduce another mouse library.
+
+The mapping must handle:
+
+* left/top boundary
+* right/bottom boundary
+* normalized 0
+* normalized 1
+* slight overshoot/clamping
+
+Clamp values safely.
+
+Never send invalid coordinates.
+
+---
+
+# 32. MOUSE POINTER RELIABILITY
+
+Prevent visible cursor jitter.
+
+Use:
+
+* palm centroid
+* One-Euro filter
+* sensible camera-to-screen mapping
+* optional dead-zone only if testing demonstrates the need
+
+Do not make the pointer sluggish.
+
+A responsive pointer is more important than eliminating every tiny pixel of motion.
+
+---
+
+# 33. CONFIGURATION
+
+Reform configuration around the new interaction model.
+
+Recommended structure:
+
+```ini
+[mouse]
+enabled = true
+dry_run = true
+smoothing_enabled = true
+
+[mouse.mapping]
+x_min = ...
+x_max = ...
+y_min = ...
+y_max = ...
+
+[rotation]
+enabled = true
+min_rotation_degrees = 28
+release_degrees = 12
+confirm_frames = 4
+cooldown_ms = 700
+neutral_timeout_ms = 500
+
+[fist]
+enabled = true
+confirm_frames = 4
+release_frames = 3
+click_cooldown_ms = 600
+```
+
+Use the project's existing configuration conventions where appropriate.
+
+Development defaults:
+
+```text
+enabled = true
+dry_run = true
+```
+
+Real input should remain disabled from actually reaching Windows until explicitly configured for live use.
+
+---
+
+# 34. ACTION MAPPING
+
+Final mapping:
+
+```text
+CLOCKWISE_ROTATION_CONFIRMED
+        ↓
+NEXT_SLIDE
+        ↓
+Right Arrow
+```
+
+```text
+ANTICLOCKWISE_ROTATION_CONFIRMED
+        ↓
+PREVIOUS_SLIDE
+        ↓
+Left Arrow
+```
+
+```text
+FIST_STARTED
+        ↓
+LEFT_CLICK
+        ↓
+native SendInput
+```
+
+No other gesture produces these actions.
+
+---
+
+# 35. ACTION DISPATCHER
+
+Keep:
+
+```text
+Gesture Event
+      ↓
+Action Dispatcher
+      ↓
+Action
+      ↓
+Input Adapter
+```
+
+Do not place Win32 `SendInput` directly inside the vision code.
+
+Example:
+
+```text
+PALM_ROTATION_CLOCKWISE
+        ↓
+NEXT_SLIDE
+        ↓
+KeyboardAdapter
+        ↓
+SendInput(RIGHT)
+```
+
+and:
+
+```text
+FIST_STARTED
+        ↓
+LEFT_CLICK
+        ↓
+MouseAdapter
+        ↓
+SendInput(LEFT BUTTON)
+```
+
+---
+
+# 36. PRESERVE THE SENDINPUT FIX
+
+This is NON-NEGOTIABLE.
+
+Do NOT modify the working x64 Win32 `INPUT` structure unless absolutely necessary.
+
+The validated layout includes:
+
+```text
+INPUT
+ ├── type
+ ├── padding
+ └── union
+      ├── MOUSEINPUT
+      ├── KEYBDINPUT
+      └── HARDWAREINPUT
+```
+
+The project previously validated:
+
+```text
+sizeof(INPUT) = 40
+```
+
+Keep that implementation intact.
+
+Existing SendInput tests must continue passing.
+
+---
+
+# 37. DEVELOPER PREVIEW
+
+During development show:
+
+```text
+Camera FPS
+Inference FPS
+Latency
+Hand confidence
+
+Palm X
+Palm Y
+
+Palm orientation
+Relative rotation
+Rotation delta
+
+Detected pose
+Pose stability
+
+Rotation state
+Last rotation event
+Last action
+
+Mouse X
+Mouse Y
+
+Bounding box
+Palm center
+```
+
+Also visualize the palm orientation vector.
+
+This makes debugging rotation direction much easier.
+
+---
+
+# 38. DEBUG OUTPUT MUST NOT HURT PERFORMANCE
+
+Avoid printing large amounts of text every frame.
+
+Do NOT:
+
+```text
+print(...)
+```
+
+continuously at camera FPS.
+
+Use:
+
+* on-screen compact metrics
+* event-based logging
+* periodic performance summaries
+
+Only log meaningful state transitions.
+
+Example:
+
+```text
+ROTATION CONFIRMED: CLOCKWISE
+ACTION: NEXT_SLIDE
+```
+
+not thousands of lines per second.
+
+---
+
+# 39. PRODUCTION MODE
+
+The final production mode should:
+
+* hide the developer camera preview
+* avoid verbose logging
+* avoid unnecessary overlays
+* continue processing locally
+* use minimal CPU/RAM
+* keep latency low
+
+No recording.
+
+No cloud communication.
+
+No telemetry.
+
+No background AI.
+
+---
+
+# 40. THREADING AND MEMORY
+
+Do not add threads unless necessary.
+
+Avoid producer/consumer queues for single-frame interaction unless benchmarking proves they are needed.
+
+Prefer processing the **latest camera frame** rather than building a backlog of old frames.
+
+The controller should never become increasingly delayed because of stale frames.
+
+If frames are being skipped, prefer dropping old frames over processing old gestures late.
+
+Avoid unnecessary allocations inside the per-frame loop.
+
+Reuse objects/buffers where practical.
+
+Do not repeatedly construct expensive model/session objects.
+
+---
+
+# 41. PERFORMANCE TESTING
+
+Measure before and after the reform.
+
+At minimum collect:
+
+```text
+MediaPipe inference mean
+MediaPipe inference P95
+E2E latency mean
+E2E latency P95
+FPS
+CPU
+RAM
+gesture-processing time
+```
+
+Compare against the current baseline.
+
+The reform should aim for:
+
+```text
+~30 FPS
+~18–20 ms inference
+minimal additional processing
+```
+
+Do not claim an optimization without measurement.
+
+---
+
+# 42. TESTS
+
+Create/update tests for:
+
+## Palm geometry
+
+Test:
+
+* palm centroid
+* palm scale
+* palm orientation
+* orientation robustness
+* signed angle difference
+* angle wraparound
+
+Example:
+
+```text
+179° → -179°
+```
+
+must produce approximately:
+
+```text
++2°
+```
+
+rather than:
+
+```text
+-358°
+```
+
+---
+
+## Rotation direction
+
+Test:
+
+```text
+clockwise → NEXT
+anti-clockwise → PREVIOUS
+```
+
+Test multiple rotation magnitudes.
+
+---
+
+## Rotation threshold
+
+Test that small rotations do not navigate:
+
+```text
+5°
+10°
+15°
+20°
+```
+
+and that only the configured threshold becomes eligible.
+
+---
+
+## Rotation confirmation
+
+Test that fewer than the required number of stable frames do not trigger.
+
+---
+
+## Cooldown
+
+Test:
+
+```text
+rotation
+→ NEXT
+→ hold
+→ no additional NEXT
+```
+
+---
+
+## Re-arm
+
+Test:
+
+```text
+rotate clockwise
+→ NEXT
+
+stay rotated
+→ nothing
+
+return toward neutral
+→ re-arm
+
+rotate clockwise again
+→ NEXT
+```
+
+---
+
+## Direction reversal
+
+Test:
+
+```text
+clockwise → NEXT
+anti-clockwise → PREVIOUS
+```
+
+and ensure rapid direction changes do not cause unintended navigation.
+
+---
+
+## Translation isolation
+
+Test that moving the palm without rotating it causes:
+
+```text
+NO NEXT
+NO PREVIOUS
+```
+
+This is a critical reliability test.
+
+---
+
+## Mouse mapping
+
+Test:
+
+```text
+palm center
+→ normalized coordinates
+→ screen coordinates
+```
+
+including boundaries and clamping.
+
+---
+
+## Fist
+
+Test:
+
+```text
+OPEN
+→ FIST
+→ CLICK
+
+FIST held
+→ no additional clicks
+
+FIST
+→ OPEN
+→ FIST
+→ second CLICK
+```
+
+---
+
+## Hand disappearance
+
+Test:
+
+```text
+hand detected
+→ movement
+
+hand disappears
+→ no movement/action
+
+hand returns
+→ resume
+```
+
+---
+
+## Safety
+
+Test:
+
+```text
+dry_run = true
+```
+
+does not generate real input.
+
+Test:
+
+```text
+enabled = false
+```
+
+does not generate input.
+
+Test that keyboard keys and mouse buttons are never left pressed.
+
+---
+
+# 43. REMOVE OBSOLETE TESTS
+
+Replace tests for:
+
+```text
+SWIPE_LEFT_CONFIRMED
+SWIPE_RIGHT_CONFIRMED
+PINCH_STARTED
+LOCK_CONTROL
+UNLOCK_CONTROL
+THUMBS_UP_UNLOCK
+LASER
+F8/F9 switching
+```
+
+with tests for:
+
+```text
+palm orientation
+clockwise navigation
+anti-clockwise navigation
+translation-vs-rotation isolation
+rotation hysteresis
+rotation re-arm
+whole-hand mouse
+fist click
+```
+
+Do not leave a large amount of dead test/code infrastructure that consumes maintenance effort.
+
+---
+
+# 44. LIVE VALIDATION
+
+After automated tests pass, perform controlled live tests.
+
+## Test 1 — Whole-hand mouse
+
+Move the hand:
+
+```text
+left
+right
+up
+down
+diagonal
+```
+
+Confirm the pointer follows the palm/whole hand.
+
+It must NOT behave as though only the index fingertip controls the pointer.
+
+---
+
+## Test 2 — Translation without rotation
+
+Move the entire hand around while keeping the palm orientation approximately unchanged.
+
+Expected:
+
+```text
+mouse moves
+NO page navigation
+```
+
+---
+
+## Test 3 — Clockwise
+
+Start neutral.
+
+Physically rotate the palm clockwise.
+
+Expected:
+
+```text
+CLOCKWISE
+→ NEXT
+→ Right Arrow
+```
+
+Exactly once.
+
+---
+
+## Test 4 — Hold
+
+Keep the rotated palm in position.
+
+Expected:
+
+```text
+NO repeated navigation
+```
+
+---
+
+## Test 5 — Re-arm
+
+Return close to neutral.
+
+Rotate clockwise again.
+
+Expected:
+
+```text
+NEXT
+```
+
+again.
+
+---
+
+## Test 6 — Anti-clockwise
+
+From neutral, rotate anti-clockwise.
+
+Expected:
+
+```text
+ANTI-CLOCKWISE
+→ PREVIOUS
+→ Left Arrow
+```
+
+Exactly once.
+
+---
+
+## Test 7 — Fist
+
+Make a fist.
+
+Expected:
+
+```text
+FIST
+→ LEFT CLICK
+```
+
+Hold.
+
+Expected:
+
+```text
+NO repeated click
+```
+
+Release and reform the fist.
+
+Expected:
+
+```text
+SECOND CLICK
+```
+
+---
+
+## Test 8 — Hand disappearance
+
+Remove the hand.
+
+Expected:
+
+```text
+mouse stops
+no click
+no navigation
+```
+
+Reinsert the hand.
+
+Expected:
+
+```text
+mouse resumes
+no accidental click
+no accidental page navigation
+```
+
+---
+
+## Test 9 — PowerPoint
+
+Test the actual presentation workflow:
+
+```text
+whole-hand movement → mouse
+clockwise rotation → next slide
+anti-clockwise rotation → previous slide
+fist → click
+```
+
+Do not claim success unless physically validated.
+
+---
+
+# 45. RELIABILITY ACCEPTANCE CRITERIA
+
+The reform is NOT complete merely because the code works in unit tests.
+
+It must behave reliably in live use.
+
+At minimum:
+
+* [ ] ordinary hand movement does not navigate slides
+* [ ] small rotations do not navigate
+* [ ] landmark jitter does not repeatedly navigate
+* [ ] holding a rotation does not repeat
+* [ ] returning to neutral reliably re-arms
+* [ ] direction changes do not create accidental double actions
+* [ ] fist holding does not repeat clicks
+* [ ] hand disappearance produces no stale actions
+* [ ] hand reappearance does not produce stale actions
+* [ ] camera mirroring does not reverse physical direction
+* [ ] both left/right hands work
+* [ ] normal pointer movement remains responsive
+
+When uncertain:
+
+**Do nothing rather than trigger the wrong action.**
+
+---
+
+# 46. LOW-RESOURCE ACCEPTANCE CRITERIA
+
+The reform must also satisfy:
+
+* [ ] no additional ML model
+* [ ] no cloud API
+* [ ] no heavyweight automation library
+* [ ] no unnecessary threads
+* [ ] no unnecessary queues
+* [ ] no per-frame excessive logging
+* [ ] no camera-frame backlog
+* [ ] no large per-frame allocations where avoidable
+* [ ] minimal extra CPU usage
+* [ ] minimal RAM increase
+* [ ] no significant FPS regression
+* [ ] low E2E latency
+
+The architecture should remain appropriate for an ordinary Windows laptop, not require gaming-class hardware.
+
+---
+
+# 47. PERFORMANCE REGRESSION GATE
+
+Before declaring completion compare the reform against the existing baseline.
+
+If:
+
+```text
+FPS drops significantly
+OR
+CPU rises significantly
+OR
+latency increases significantly
+```
+
+do not simply accept it.
+
+Profile the new code.
+
+Identify the expensive operation.
+
+Simplify it where possible.
+
+Do NOT solve performance problems by reducing reliability.
+
+Reliability remains the first priority.
+
+---
+
+# 48. FINAL ARCHITECTURE
+
+The intended final architecture is:
+
+```text
+                WEBCAM
+                   │
+                   ▼
+        MediaPipe Hand Landmarker
+                   │
+                   ▼
+              21 LANDMARKS
+                   │
+        ┌──────────┼──────────┐
+        │          │          │
+        ▼          ▼          ▼
+  PALM CENTROID  PALM BASIS  FINGER GEOMETRY
+        │          │          │
+        ▼          ▼          ▼
+  One-Euro       ORIENTATION  FIST CLASSIFIER
+   FILTER          │          │
+        │          ▼          ▼
+        │       ROTATION    FIST_STARTED
+        │       STATE FSM       │
+        │          │             │
+        ▼          ▼             ▼
+      MOUSE      NAVIGATION     CLICK
+        │          │             │
+        └──────────┼─────────────┘
+                   ▼
+             ACTION DISPATCHER
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+     KeyboardAdapter    MouseAdapter
+          │                 │
+          └───────┬─────────┘
+                  ▼
+              SendInput
+```
+
+Keep this architecture deterministic, lightweight, and easy to debug.
+
+---
+
+# 49. REQUIRED FINAL REPORT
+
+When implementation is complete, report:
+
+## 1. Root cause
+
+Explain what was wrong with the previous interaction model and why the new design is more reliable.
+
+## 2. Architecture
+
+Show the final pipeline.
+
+## 3. Palm rotation method
+
+Explain exactly:
+
+* landmarks used
+* palm basis/reference vector
+* angle calculation
+* signed angular difference
+* clockwise/anti-clockwise convention
+* mirror compensation
+* neutral baseline
+* activation threshold
+* release threshold
+* confirmation frames
+* cooldown
+* re-arm behavior
+
+## 4. Reliability measures
+
+Explain how the implementation prevents:
+
+* false page changes
+* repeated page changes
+* accidental clicks
+* stale events
+* movement being mistaken for rotation
+
+## 5. Resource usage
+
+Report:
+
+```text
+FPS
+MediaPipe inference
+E2E latency
+CPU
+RAM
+rotation processing overhead
+mouse processing overhead
+```
+
+Compare against the previous baseline.
+
+## 6. Files changed
+
+List every modified, created, or deleted file and explain why.
+
+## 7. Tests
+
+Report:
+
+```text
+X/X tests passed
+```
+
+and summarize the important reliability tests.
+
+## 8. Live results
+
+Report honestly:
+
+```text
+Whole-hand mouse: PASS/FAIL
+Translation isolation: PASS/FAIL
+Clockwise → NEXT: PASS/FAIL
+Anti-clockwise → PREVIOUS: PASS/FAIL
+Hold protection: PASS/FAIL
+Re-arm: PASS/FAIL
+Fist → CLICK: PASS/FAIL
+Hand disappearance: PASS/FAIL
+PowerPoint: PASS/FAIL
+```
+
+Do NOT claim a live test passed unless it was physically performed.
+
+## 9. Limitations
+
+Clearly state any remaining limitations.
+
+---
+
+# 50. FINAL DEVELOPMENT RULE
+
+After completing this reform:
+
+**STOP.**
+
+Do not automatically add another phase.
+
+Do not add:
+
+* voice commands
+* calibration wizard
+* automatic presentation detection
+* multi-monitor support
+* additional gestures
+* AI gesture classification
+* cloud integrations
+* startup automation
+
+Those are separate future phases.
+
+For this reform, focus ONLY on:
+
+```text
+RELIABLE WHOLE-HAND MOUSE
++
+RELIABLE PALM-ROTATION NAVIGATION
++
+RELIABLE FIST CLICK
+```
+
+The final system must be:
+
+```text
+RELIABLE
+LIGHTWEIGHT
+LOW-LATENCY
+DETERMINISTIC
+OFFLINE
+```
+
+When reliability and resource usage conflict, first simplify the implementation and improve the state/geometry logic.
+
+Do NOT solve reliability problems by adding a large ML model or heavyweight dependency.
+
+Do NOT sacrifice reliability merely to gain a few milliseconds.
+
+**Reliability is the primary acceptance criterion.**

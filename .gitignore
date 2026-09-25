@@ -1,0 +1,32 @@
+# ---> Python
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# ML model bundle (re-downloadable, ~7.8 MB)
+models/
+
+# Regenerated run outputs
+logs/
+
+# Machine-specific local state
+camera_profile.json
+profiles/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local tool config (opencode session)
+opencode.json
